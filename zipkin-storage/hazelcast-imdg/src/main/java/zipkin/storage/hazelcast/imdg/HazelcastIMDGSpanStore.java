@@ -19,11 +19,15 @@ import static zipkin.internal.Util.sortedList;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.IMap;
@@ -31,13 +35,13 @@ import com.hazelcast.core.MultiMap;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
 
-import zipkin.BinaryAnnotation;
 import zipkin.DependencyLink;
 import zipkin.Span;
 import zipkin.internal.CorrectForClockSkew;
 import zipkin.internal.DependencyLinker;
 import zipkin.internal.GroupByTraceId;
 import zipkin.internal.MergeById;
+import zipkin.internal.Pair;
 import zipkin.storage.QueryRequest;
 import zipkin.storage.SpanStore;
 
@@ -110,7 +114,7 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 				if (predicate==null) {
 					predicate = Predicates.equal("name", spanName);
 				} else {
-					predicate = Predicates.and(predicate, Predicates.equal("name", spanName));
+					predicate = Predicates.or(predicate, Predicates.equal("name", spanName));
 				}
 			}
 		}
@@ -125,11 +129,10 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 			predicate = Predicates.and(predicate, end_Microseconds, start_Microseconds);
 		}
 		
-		// Add duration, if both bounds set
-		if (request.maxDuration!=null && request.minDuration!=null) {
+		// Add max duration, as min is derived by service by request.test() later.
+		if (request.maxDuration!=null) {
 			Predicate max = Predicates.lessEqual("duration", request.maxDuration);
-			Predicate min = Predicates.greaterEqual("duration", request.minDuration);
-			predicate = Predicates.and(predicate, min, max);
+			predicate = Predicates.and(predicate, max);
 		}
 
 		// String annotations
@@ -139,25 +142,18 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 					String match = annotationStr.trim();
 					if (match.length()>0) {
 						Predicate annotationPredicate = Predicates.equal("annotations[any].value", annotationStr);
-						predicate = Predicates.and(predicate, annotationPredicate);
+						Predicate binaryAnnotationPredicate =
+								Predicates.equal("binaryAnnotations[any].key", annotationStr);
+						predicate = Predicates.and(predicate, Predicates.or(annotationPredicate, binaryAnnotationPredicate));
 					}
 				}
 			}
 		}
 		
-		// Binary annotations, provided as key/value
+		// Binary annotations, provided as key/value but value n
 		if (request.binaryAnnotations!=null && !request.binaryAnnotations.isEmpty()) {
 			for (Map.Entry<String, String> entry : request.binaryAnnotations.entrySet()) {
-
-				BinaryAnnotation binaryAnnotation =
-						zipkin.BinaryAnnotation.builder()
-						.key(entry.getKey())
-						.value(entry.getValue())
-						.build();
-				
-				Predicate binaryAnnotationPredicate = 
-						Predicates.equal("binaryAnnotations[any]", binaryAnnotation);
-				predicate = Predicates.and(predicate, binaryAnnotationPredicate);
+				predicate = Predicates.and(predicate, Predicates.equal("binaryAnnotations[any].key", entry.getKey()));
 			}
 		}
 
@@ -171,18 +167,19 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 		/* Finally, prepare the output
 		 */
 	    List<List<Span>> result = new ArrayList<>();
-	    Set<Long> traceIds = this._traceIdsDescendingByTimestamp(searchResult, request.limit);
+	    Set<Long> traceIdsInTimerange = this._traceIdsDescendingByTimestamp(searchResult);
 
-	    for (long traceId : traceIds) {
-	    	Collection<Span> sameTraceId = this._spansByTraceId(searchResult, traceId);
-	    	
-	        for (List<Span> next : GroupByTraceId.apply(sameTraceId, strictTraceId, true)) {
-	        	if (request.test(next)) {
-	        		result.add(next);
-		        }
+
+	    for (Iterator<Long> traceId = traceIdsInTimerange.iterator();
+	        traceId.hasNext() && result.size() < request.limit; ) {
+	      Collection<Span> sameTraceId = this._spansByTraceId(searchResult, traceId.next());
+	      for (List<Span> next : GroupByTraceId.apply(sameTraceId, strictTraceId, true)) {
+	        if (request.test(next)) {
+	          result.add(next);
 	        }
+	      }
 	    }
-
+	    
 	    Collections.sort(result, TRACE_DESCENDING);
 	    return result;
 	}
@@ -344,35 +341,41 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 
 	/**
 	 * <P>Hazelcast search results are unsorted, as they occur in parallel across
-	 * multiple members. Sort the results and apply a limit, so the newest <I>n</I>
-	 * trace Ids are selected.
+	 * multiple members. Sort the results, so the newest <I>n</I> trace Ids can
+	 * be selected.
 	 * </P>
 	 * 
 	 * @param searchResult From Hazelcast search
-	 * @param limit Where to truncate
-	 * @return A set of at most {@code limit} traceIds.
+	 * @return TraceIds in the sequence of their unreturned timestamp.
 	 */
-	private Set<Long> _traceIdsDescendingByTimestamp(Collection<Span> searchResult, int limit) {
-		if (searchResult.isEmpty() || limit < 1) {
+	private Set<Long> _traceIdsDescendingByTimestamp(Collection<Span> searchResult) {
+		if (searchResult.isEmpty()) {
 			return Collections.emptySet();
 		}
+		
+		TreeSet<Pair<Long>> matches = new TreeSet<>(VALUE_1_DESCENDING);
 
-		TreeMap<Long, Span> matches = new TreeMap<>();
 		for(Span span : searchResult) {
-			if (matches.size() < limit) {
-				matches.put(span.timestamp, span);
-			} else {
-				if (span.timestamp > matches.lastKey()) {
-					matches.remove(matches.lastKey());
-					matches.put(span.timestamp, span);
-				}
-			}
+			Pair<Long> pair = Pair.create(span.timestamp, span.traceId);
+			matches.add(pair);
 		}
-
-		Set<Long> result = new HashSet<>();
-		matches.values().stream().forEach(span -> result.add(span.traceId));
+		
+		// toCollection(LinkedHashSet::new) preserves order
+		Set<Long> result = 
+				matches.stream().map(pair -> pair._2)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
 		return result;
 	}
+
+	/**
+	 * <P>Borrowed from {@link zipkin.storage.InMemorySpanStore}
+	 * </P>
+	 */
+	static final Comparator<Pair<Long>> VALUE_1_DESCENDING = (left, right) -> {
+		    int result = right._1.compareTo(left._1);
+		    if (result != 0) return result;
+		    return right._2.compareTo(left._2);
+	};
 
 	/**
 	 * <P>Extract selected spans from search
