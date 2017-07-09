@@ -96,6 +96,10 @@ zipkin:
       username: ${ES_USERNAME:}
       password: ${ES_PASSWORD:}
       http-logging: ${ES_HTTP_LOGGING:}
+    hazelcast:
+      clusterMemberCSV: ${HAZELCAST_CLUSTER_MEMBER_CSV:}
+      groupName: ${HAZELCAST_GROUP_NAME:dev}
+      groupPassword: ${HAZELCAST_GROUP_PASSWORD:dev-pass}
     mysql:
       host: ${MYSQL_HOST:localhost}
       port: ${MYSQL_TCP_PORT:3306}

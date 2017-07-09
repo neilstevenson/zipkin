@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hazelcast-client xsi:schemaLocation="http://www.hazelcast.com/schema/client-config hazelcast-client-config-3.8.xsd"
+           xmlns="http://www.hazelcast.com/schema/client-config"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+	<!-- These values are overridden if zipkin.storage.hazelcast properties exist -->
+
+    <!-- Credentials for the cluster, do not use the defaults for production -->
+    <group>
+        <name>dev</name>
+        <password>dev-pass</password>
+    </group>
+           
+    <!-- CSV of host:port for some cluster members, response includes connection to all others -->
+    <network>
+        <cluster-members>
+        	<address>127.0.0.1:5701</address>
+        </cluster-members>
+    </network>
+
+</hazelcast-client>

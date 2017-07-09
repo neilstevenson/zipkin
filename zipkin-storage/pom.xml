@@ -34,6 +34,8 @@
   <modules>
     <module>cassandra</module>
     <module>cassandra3</module>
+    <module>hazelcast-imdg-shared</module>
+    <module>hazelcast-imdg</module>
     <module>mysql</module>
     <module>elasticsearch-http</module>
   </modules>

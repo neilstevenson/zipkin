@@ -105,6 +105,13 @@
       <optional>true</optional>
     </dependency>
 
+    <!-- Hazelcast IMDG backend -->
+    <dependency>
+      <groupId>${project.groupId}</groupId>
+      <artifactId>zipkin-autoconfigure-storage-hazelcast-imdg</artifactId>
+      <optional>true</optional>
+    </dependency>
+
     <!-- MySQL backend -->
     <dependency>
       <groupId>${project.groupId}</groupId>

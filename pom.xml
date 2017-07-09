@@ -32,6 +32,7 @@
     <module>zipkin-storage</module>
     <module>zipkin-collector</module>
     <module>zipkin-autoconfigure</module>
+    <module>zipkin-hazelcast-imdg-server</module>
     <module>zipkin-server</module>
   </modules>
 
@@ -47,6 +48,7 @@
 
     <brave.version>4.3.3</brave.version>
     <cassandra-driver-core.version>3.3.0</cassandra-driver-core.version>
+    <hazelcast.version>3.8.3</hazelcast.version>
     <okio.version>1.13.0</okio.version>
     <!-- important to keep this in sync with spring-boot-dependencies -->
     <jooq.version>3.9.2</jooq.version>
@@ -190,6 +192,18 @@
 
       <dependency>
         <groupId>${project.groupId}</groupId>
+        <artifactId>zipkin-storage-hazelcast-imdg</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>${project.groupId}</groupId>
+        <artifactId>zipkin-autoconfigure-storage-hazelcast-imdg</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>${project.groupId}</groupId>
         <artifactId>zipkin-storage-mysql</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -294,6 +308,16 @@
         <groupId>com.datastax.cassandra</groupId>
         <artifactId>cassandra-driver-mapping</artifactId>
         <version>${cassandra-driver-core.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hazelcast</groupId>
+        <artifactId>hazelcast</artifactId>
+        <version>${hazelcast.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hazelcast</groupId>
+        <artifactId>hazelcast-client</artifactId>
+        <version>${hazelcast.version}</version>
       </dependency>
       <dependency>
         <groupId>org.jooq</groupId>
