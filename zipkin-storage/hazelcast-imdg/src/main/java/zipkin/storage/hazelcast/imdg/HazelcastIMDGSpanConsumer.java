@@ -67,7 +67,6 @@ public class HazelcastIMDGSpanConsumer implements SpanConsumer {
 	        if (previous!=null) {
 	        	Span merged = previous.toBuilder().merge(span).build();
 	        	spansMap.put(spanKey, merged);
-	        } else {
 	        }
 
 	        // Service names on span and parents
@@ -87,7 +86,7 @@ public class HazelcastIMDGSpanConsumer implements SpanConsumer {
         		parentId = (parentSpan==null ? null : parentSpan.parentId);
         	}
 		}
-	    
+
 	}
 
 	private void _recordServices(String spanName, Set<String> serviceNames) {

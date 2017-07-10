@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,9 +31,12 @@ import java.util.stream.Collectors;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.IMap;
 import com.hazelcast.core.MultiMap;
+import com.hazelcast.projection.Projection;
+import com.hazelcast.projection.Projections;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
 
+import zipkin.Annotation;
 import zipkin.DependencyLink;
 import zipkin.Span;
 import zipkin.internal.CorrectForClockSkew;
@@ -118,45 +120,67 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 				}
 			}
 		}
-
-		// Add time range, converting from milliseconds on QueryRequest to microseconds on Span
-		Predicate end_Microseconds = Predicates.lessEqual("timestamp", request.endTs * 1000);
-		Predicate start_Microseconds = Predicates.greaterEqual("timestamp", (request.endTs - request.lookback) * 1000);
 		
-		if (predicate==null) {
-			predicate = Predicates.and(end_Microseconds, start_Microseconds);
-		} else {
-			predicate = Predicates.and(predicate, end_Microseconds, start_Microseconds);
-		}
-		
-		// Add max duration, as min is derived by service by request.test() later.
-		if (request.maxDuration!=null) {
-			Predicate max = Predicates.lessEqual("duration", request.maxDuration);
-			predicate = Predicates.and(predicate, max);
-		}
-
-		// String annotations
-		if (request.annotations!=null && !request.annotations.isEmpty()) {
-			for (String annotationStr : request.annotations) {
-				if (annotationStr!=null && annotationStr.length() > 0) {
-					String match = annotationStr.trim();
-					if (match.length()>0) {
-						Predicate annotationPredicate = Predicates.equal("annotations[any].value", annotationStr);
-						Predicate binaryAnnotationPredicate =
-								Predicates.equal("binaryAnnotations[any].key", annotationStr);
-						predicate = Predicates.and(predicate, Predicates.or(annotationPredicate, binaryAnnotationPredicate));
+		// Find all trace ids for the spans by name or spans by service name
+		if (predicate!=null) {
+			Projection projection = Projections.multiAttribute("traceIdHigh", "traceId");
+			Collection<Object[]> traces = spans.project(projection, predicate);
+			predicate = null;
+			if (traces!=null) {
+				for (Object[] trace : traces) {
+					if (predicate==null) {
+						predicate = 
+								Predicates.and(Predicates.equal("traceIdHigh", trace[0].toString())
+											,Predicates.equal("traceId", trace[1].toString())
+										)
+								;
+					} else {
+						predicate = Predicates.or(predicate,
+								Predicates.and(Predicates.equal("traceIdHigh", trace[0].toString())
+											,Predicates.equal("traceId", trace[1].toString())
+										)
+								);
 					}
 				}
 			}
 		}
-		
-		// Binary annotations, provided as key/value but value n
-		if (request.binaryAnnotations!=null && !request.binaryAnnotations.isEmpty()) {
-			for (Map.Entry<String, String> entry : request.binaryAnnotations.entrySet()) {
-				predicate = Predicates.and(predicate, Predicates.equal("binaryAnnotations[any].key", entry.getKey()));
+
+		if (predicate==null) {
+			// Add time range, converting from milliseconds on QueryRequest to microseconds on Span
+			Predicate end_Microseconds = Predicates.lessEqual("timestamp", request.endTs * 1000);
+			Predicate start_Microseconds = Predicates.greaterEqual("timestamp", (request.endTs - request.lookback) * 1000);
+			
+			predicate = Predicates.and(end_Microseconds, start_Microseconds);
+			
+			// Add max duration, as min is derived by service by request.test() later.
+			if (request.maxDuration!=null) {
+				Predicate max = Predicates.lessEqual("duration", request.maxDuration);
+				predicate = Predicates.and(predicate, max);
+			}
+
+			// String annotations
+			if (request.annotations!=null && !request.annotations.isEmpty()) {
+				for (String annotationStr : request.annotations) {
+					if (annotationStr!=null && annotationStr.length() > 0) {
+						String match = annotationStr.trim();
+						if (match.length()>0) {
+							Predicate annotationPredicate = Predicates.equal("annotations[any].value", annotationStr);
+							Predicate binaryAnnotationPredicate =
+									Predicates.equal("binaryAnnotations[any].key", annotationStr);
+							predicate = Predicates.and(predicate, Predicates.or(annotationPredicate, binaryAnnotationPredicate));
+						}
+					}
+				}
+			}
+			
+			// Binary annotations, provided as key/value but value n
+			if (request.binaryAnnotations!=null && !request.binaryAnnotations.isEmpty()) {
+				for (Map.Entry<String, String> entry : request.binaryAnnotations.entrySet()) {
+					predicate = Predicates.and(predicate, Predicates.equal("binaryAnnotations[any].key", entry.getKey()));
+				}
 			}
 		}
-
+		
 		/* Search for matching spans
 		 */
 		Collection<Span> searchResult = new ArrayList<>();
@@ -167,12 +191,14 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 		/* Finally, prepare the output
 		 */
 	    List<List<Span>> result = new ArrayList<>();
-	    Set<Long> traceIdsInTimerange = this._traceIdsDescendingByTimestamp(searchResult);
-
+	    
+	    Collection<Span> theSpans = this._postProcess(searchResult);
+	    
+	    Set<Long> traceIdsInTimerange = this._traceIdsDescendingByTimestamp(theSpans);
 
 	    for (Iterator<Long> traceId = traceIdsInTimerange.iterator();
 	        traceId.hasNext() && result.size() < request.limit; ) {
-	      Collection<Span> sameTraceId = this._spansByTraceId(searchResult, traceId.next());
+	      Collection<Span> sameTraceId = this._spansByTraceId(theSpans, traceId.next());
 	      for (List<Span> next : GroupByTraceId.apply(sameTraceId, strictTraceId, true)) {
 	        if (request.test(next)) {
 	          result.add(next);
@@ -356,8 +382,10 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 		TreeSet<Pair<Long>> matches = new TreeSet<>(VALUE_1_DESCENDING);
 
 		for(Span span : searchResult) {
-			Pair<Long> pair = Pair.create(span.timestamp, span.traceId);
-			matches.add(pair);
+			if (span.timestamp!=null) {
+				Pair<Long> pair = Pair.create(span.timestamp, span.traceId);
+				matches.add(pair);
+			}
 		}
 		
 		// toCollection(LinkedHashSet::new) preserves order
@@ -378,16 +406,40 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 	};
 
 	/**
-	 * <P>Extract selected spans from search
+	 * <P>Post processing, some logic is supposed to be applied to query results rather
+	 * than to data when it is stored.
+	 * 
+	 * @param searchResult From Hazelcast
+	 * @return
+	 */
+	private Collection<Span> _postProcess(Collection<Span> searchResult) {
+		Collection<Span> result = new ArrayList<>();
+		for (Span span : searchResult) {
+			// To be added at query time rather than to stored content
+			if (span.timestamp==null & span.duration==null && span.annotations!=null && span.annotations.size() > 1) {
+				TreeSet<Annotation> annotations = new TreeSet<>(span.annotations);
+				long startTimestamp = annotations.first().timestamp;
+				long endTimestamp = annotations.last().timestamp;
+				span = span.toBuilder().duration(endTimestamp - startTimestamp).timestamp(startTimestamp).build();
+			}
+			
+			result.add(span);
+		}
+		return result;
+	}
+
+	
+	/**
+	 * <P>Extract selected spans from search. Could probably replace with a lambda
 	 * </P>
 	 *
-	 * @param searchResult From Hazelcast
+	 * @param theSpans A collection of spans
 	 * @param traceId To look for
 	 * @return The matches
 	 */
-	private Collection<Span> _spansByTraceId(Collection<Span> searchResult, long traceIdRequired) {
+	private Collection<Span> _spansByTraceId(Collection<Span> theSpans, long traceIdRequired) {
 		Collection<Span> result = new ArrayList<>();
-		for (Span span : searchResult) {
+		for (Span span : theSpans) {
 			if (span.traceId == traceIdRequired) {
 				result.add(span);
 			}
