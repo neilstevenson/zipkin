@@ -255,21 +255,15 @@ public class HazelcastIMDGSpanStore implements SpanStore {
 			predicate = Predicates.equal("traceId", traceIdLow);
 		}
 
-		Collection<Span> collection = this.spans.values(predicate);
+		Collection<Span> unmodifiableCollection = this.spans.values(predicate);
 
-		if (collection.size()==0) {
+		if (unmodifiableCollection.size()==0) {
 			return null;
 		}
 
-		List<Span> list;
+		List<Span> list = new ArrayList<>(unmodifiableCollection);
 
-		if (collection instanceof List) {
-			list = (List<Span>) collection;
-		} else {
-			list = new ArrayList<>(collection);
-		}
-
-		if (sortRequired) {
+		if (sortRequired && !list.isEmpty()) {
 			Collections.sort(list);
 		}
 
