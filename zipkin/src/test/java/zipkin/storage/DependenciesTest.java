@@ -33,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static zipkin.Constants.CLIENT_ADDR;
 import static zipkin.Constants.CLIENT_RECV;
 import static zipkin.Constants.CLIENT_SEND;
+import static zipkin.Constants.ERROR;
 import static zipkin.Constants.LOCAL_COMPONENT;
 import static zipkin.Constants.SERVER_ADDR;
 import static zipkin.Constants.SERVER_RECV;
@@ -95,12 +96,29 @@ public abstract class DependenciesTest {
    */
   @Test
   public void getDependencies_strictTraceId() {
-    List<Span> mixedTrace = new ArrayList<>(TRACE);
-    mixedTrace.set(1, TRACE.get(1).toBuilder().traceIdHigh(2).build());
+    long traceIdHigh = Long.MAX_VALUE;
+    long traceId = Long.MIN_VALUE;
+    List<Span> mixedTrace = asList(
+      Span.builder().traceIdHigh(traceIdHigh).traceId(traceId).id(1L).name("get")
+        .addAnnotation(Annotation.create(TODAY * 1000, SERVER_RECV, WEB_ENDPOINT))
+        .addAnnotation(Annotation.create((TODAY + 350) * 1000, SERVER_SEND, WEB_ENDPOINT))
+        .build(),
+      // the server dropped traceIdHigh
+      Span.builder().traceId(traceId).parentId(1L).id(2L).name("get")
+        .addAnnotation(Annotation.create((TODAY + 100) * 1000, SERVER_RECV, APP_ENDPOINT))
+        .addAnnotation(Annotation.create((TODAY + 250) * 1000, SERVER_SEND, APP_ENDPOINT))
+        .build(),
+      Span.builder().traceIdHigh(traceIdHigh).traceId(traceId).parentId(1L).id(2L).name("get")
+        .addAnnotation(Annotation.create((TODAY + 50) * 1000, CLIENT_SEND, WEB_ENDPOINT))
+        .addAnnotation(Annotation.create((TODAY + 300) * 1000, CLIENT_RECV, WEB_ENDPOINT))
+        .build()
+    );
+
     processDependencies(mixedTrace);
 
-    assertThat(store().getDependencies(TODAY + 1000L, null))
-        .containsOnlyElementsOf(LINKS);
+    assertThat(store().getDependencies(TODAY + 1000L, null)).containsOnly(
+      DependencyLink.create("web", "app", 1)
+    );
   }
 
   /** It should be safe to run dependency link jobs twice */
@@ -462,8 +480,8 @@ public abstract class DependenciesTest {
 
     // A user looks at all links since data started
     assertThat(store().getDependencies(DEPENDENCIES.endTs, null)).containsOnly(
-        DependencyLink.create("web", "app", 2),
-        DependencyLink.create("app", "db", 2)
+      DependencyLink.builder().parent("web").child("app").callCount(2L).build(),
+      DependencyLink.builder().parent("app").child("db").callCount(2L).errorCount(2L).build()
     );
   }
 
@@ -637,6 +655,24 @@ public abstract class DependenciesTest {
 
     assertThat(store().getDependencies(TODAY + 1000L, null)).containsOnly(
         DependencyLink.create("web", "app", 1)
+    );
+  }
+
+  /** A timeline annotation named error is not a failed span. A tag/binary annotation is. */
+  @Test
+  public void annotationNamedErrorIsntError() {
+    List<Span> trace = asList(
+      Span.builder().traceId(10L).id(10L).name("")
+        .addAnnotation(Annotation.create((TODAY + 50) * 1000, CLIENT_SEND, WEB_ENDPOINT))
+        .addAnnotation(Annotation.create((TODAY + 72) * 1000, ERROR, APP_ENDPOINT))
+        .addAnnotation(Annotation.create((TODAY + 100) * 1000, SERVER_RECV, APP_ENDPOINT))
+        .build()
+    );
+
+    processDependencies(trace);
+
+    assertThat(store().getDependencies(TODAY + 1000L, null)).containsOnly(
+      DependencyLink.create("web", "app", 1)
     );
   }
 
