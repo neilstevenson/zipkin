@@ -59,5 +59,11 @@ public class HazelcastIMDGSpanKey implements Serializable {
 	public void setSpanId(long spanId) {
 		this.spanId = spanId;
 	}
+
+	@Override
+	public String toString() {
+		return "HazelcastIMDGSpanKey [traceIdHigh=" + traceIdHigh + ", traceIdLow=" + traceIdLow + ", spanId=" + spanId
+				+ "]";
+	}
 	  
 }
