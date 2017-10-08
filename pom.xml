@@ -50,7 +50,7 @@
 
     <brave.version>4.8.0</brave.version>
     <cassandra-driver-core.version>3.3.0</cassandra-driver-core.version>
-    <hazelcast.version>3.8.3</hazelcast.version>
+    <hazelcast.version>3.8.6</hazelcast.version>
     <okio.version>1.13.0</okio.version>
     <!-- important to keep this in sync with spring-boot-dependencies -->
     <jooq.version>3.9.5</jooq.version>
