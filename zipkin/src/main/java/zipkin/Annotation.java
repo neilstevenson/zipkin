@@ -13,8 +13,9 @@
  */
 package zipkin;
 
+import java.io.Serializable;
+import javax.annotation.Nullable;
 import zipkin.internal.JsonCodec;
-import zipkin.internal.Nullable;
 
 import static zipkin.internal.Util.UTF_8;
 import static zipkin.internal.Util.checkNotNull;
@@ -25,7 +26,8 @@ import static zipkin.internal.Util.equal;
  *
  * <p>Unlike log statements, annotations are often codes: Ex. {@link Constants#SERVER_RECV "sr"}.
  */
-public final class Annotation implements Comparable<Annotation> {
+public final class Annotation implements Comparable<Annotation>, Serializable { // for Spark jobs
+  private static final long serialVersionUID = 0L;
 
   public static Annotation create(long timestamp, String value, @Nullable Endpoint endpoint) {
     return new Annotation(timestamp, value, endpoint);
@@ -49,7 +51,7 @@ public final class Annotation implements Comparable<Annotation> {
   @Nullable
   public final Endpoint endpoint;
 
-  Annotation(long timestamp, String value, Endpoint endpoint) {
+  Annotation(long timestamp, String value, @Nullable Endpoint endpoint) {
     this.timestamp = timestamp;
     this.value = checkNotNull(value, "value");
     this.endpoint = endpoint;
@@ -116,7 +118,7 @@ public final class Annotation implements Comparable<Annotation> {
   public int hashCode() {
     int h = 1;
     h *= 1000003;
-    h ^= (timestamp >>> 32) ^ timestamp;
+    h ^= (int) (h ^ ((timestamp >>> 32) ^ timestamp));
     h *= 1000003;
     h ^= value.hashCode();
     h *= 1000003;

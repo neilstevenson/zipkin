@@ -20,11 +20,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
+import javax.annotation.Nullable;
 import zipkin.Annotation;
 import zipkin.BinaryAnnotation;
 import zipkin.Constants;
 import zipkin.Endpoint;
 import zipkin.Span;
+import zipkin2.internal.Node;
 
 import static java.lang.String.format;
 import static java.util.logging.Level.FINE;
@@ -71,7 +73,13 @@ public final class CorrectForClockSkew {
         }
         rootSpanId = next.id;
       }
-      if (!treeBuilder.addNode(next.parentId, next.id, next)) dataError = true;
+      if (!treeBuilder.addNode(
+        next.parentId != null ? toLowerHex(next.parentId) : null,
+        toLowerHex(next.id),
+        next
+      )) {
+        dataError = true;
+      }
     }
 
     if (rootSpanId == null) {
@@ -179,8 +187,13 @@ public final class CorrectForClockSkew {
   }
 
   static boolean ipsMatch(Endpoint skew, Endpoint that) {
-    return (skew.ipv6 != null && Arrays.equals(skew.ipv6, that.ipv6))
-        || (skew.ipv4 != 0 && skew.ipv4 == that.ipv4);
+    if (skew.ipv6 != null && that.ipv6 != null) {
+      if (Arrays.equals(skew.ipv6, that.ipv6)) return true;
+    }
+    if (skew.ipv4 != 0 && that.ipv4 != 0 ) {
+      if (skew.ipv4 == that.ipv4) return true;
+    }
+    return false;
   }
 
   /** Use client/server annotations to determine if there's clock skew. */

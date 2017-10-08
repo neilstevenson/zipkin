@@ -22,7 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import zipkin.internal.Nullable;
+import javax.annotation.Nullable;
 import zipkin.storage.StorageComponent;
 
 import static zipkin.internal.Util.UTF_8;
@@ -161,11 +161,11 @@ public final class Span implements Comparable<Span>, Serializable { // for Spark
   public final Boolean debug;
 
   Span(Builder builder) {
-    this.traceId = builder.traceId;
+    this.traceId = checkNotNull(builder.traceId, "traceId");
     this.traceIdHigh = builder.traceIdHigh != null ? builder.traceIdHigh : 0L;
     this.name = checkNotNull(builder.name, "name").isEmpty() ? ""
         : builder.name.toLowerCase(Locale.ROOT);
-    this.id = builder.id;
+    this.id = checkNotNull(builder.id, "id");
     this.parentId = builder.parentId;
     this.timestamp = builder.timestamp;
     this.duration = builder.duration;
@@ -414,13 +414,13 @@ public final class Span implements Comparable<Span>, Serializable { // for Spark
   public int hashCode() {
     int h = 1;
     h *= 1000003;
-    h ^= (traceIdHigh >>> 32) ^ traceIdHigh;
+    h ^= (int) (h ^ ((traceIdHigh >>> 32) ^ traceIdHigh));
     h *= 1000003;
-    h ^= (traceId >>> 32) ^ traceId;
+    h ^= (int) (h ^ ((traceId >>> 32) ^ traceId));
     h *= 1000003;
     h ^= name.hashCode();
     h *= 1000003;
-    h ^= (id >>> 32) ^ id;
+    h ^= (int) (h ^ ((id >>> 32) ^ id));
     h *= 1000003;
     h ^= (parentId == null) ? 0 : parentId.hashCode();
     h *= 1000003;

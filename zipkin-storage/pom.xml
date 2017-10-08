@@ -20,7 +20,7 @@
   <parent>
     <groupId>io.zipkin.java</groupId>
     <artifactId>parent</artifactId>
-    <version>1.28.2-SNAPSHOT</version>
+    <version>2.1.1-SNAPSHOT</version>
   </parent>
 
   <artifactId>zipkin-storage</artifactId>
@@ -37,6 +37,7 @@
     <module>hazelcast-imdg-shared</module>
     <module>hazelcast-imdg</module>
     <module>mysql</module>
+    <module>elasticsearch</module>
     <module>elasticsearch-http</module>
   </modules>
 </project>

@@ -32,10 +32,9 @@ import zipkin.Annotation;
 import zipkin.BinaryAnnotation;
 import zipkin.Constants;
 import zipkin.Endpoint;
-import zipkin.Span;
 import zipkin.TraceKeys;
-import zipkin.internal.Span2;
 import zipkin.internal.Util;
+import zipkin2.Span;
 
 @Measurement(iterations = 5, time = 1)
 @Warmup(iterations = 10, time = 1)
@@ -50,17 +49,17 @@ public class SpanBenchmarks {
   static final Endpoint app =
       Endpoint.builder().serviceName("app").ipv4(172 << 24 | 17 << 16 | 2).port(8080).build();
 
-  final Span.Builder sharedBuilder;
-  final Span2.Builder shared2Builder;
+  final zipkin.Span.Builder sharedBuilder;
+  final Span.Builder shared2Builder;
 
   public SpanBenchmarks() {
-    sharedBuilder = buildClientOnlySpan(Span.builder()).toBuilder();
+    sharedBuilder = buildClientOnlySpan(zipkin.Span.builder()).toBuilder();
     shared2Builder = buildClientOnlySpan2().toBuilder();
   }
 
   @Benchmark
-  public Span buildLocalSpan() {
-    return Span.builder()
+  public zipkin.Span buildLocalSpan() {
+    return zipkin.Span.builder()
         .traceId(1L)
         .id(1L)
         .name("work")
@@ -70,21 +69,31 @@ public class SpanBenchmarks {
         .build();
   }
 
-  static final long traceId = Util.lowerHexToUnsignedLong("86154a4ba6e91385");
-  static final long spanId = Util.lowerHexToUnsignedLong("4d1e00c0db9010db");
+  static final String traceIdHex = "86154a4ba6e91385";
+  static final String spanIdHex = "4d1e00c0db9010db";
+  static final long traceId = Util.lowerHexToUnsignedLong(traceIdHex);
+  static final long spanId = Util.lowerHexToUnsignedLong(spanIdHex);
   static final Endpoint frontend = Endpoint.create("frontend", 127 << 24 | 1);
   static final Endpoint backend = Endpoint.builder()
     .serviceName("backend")
     .ipv4(192 << 24 | 168 << 16 | 99 << 8 | 101)
     .port(9000)
     .build();
-
+  static final zipkin2.Endpoint frontend2 = zipkin2.Endpoint.newBuilder()
+    .serviceName("frontend")
+    .ip("127.0.0.1")
+    .build();
+  static final zipkin2.Endpoint backend2 = zipkin2.Endpoint.newBuilder()
+    .serviceName("backend")
+    .ip("192.168.99.101")
+    .port(9000)
+    .build();
   @Benchmark
-  public Span buildClientOnlySpan() {
-    return buildClientOnlySpan(Span.builder());
+  public zipkin.Span buildClientOnlySpan() {
+    return buildClientOnlySpan(zipkin.Span.builder());
   }
 
-  static Span buildClientOnlySpan(Span.Builder builder) {
+  static zipkin.Span buildClientOnlySpan(zipkin.Span.Builder builder) {
     return builder
       .traceId(traceId)
       .parentId(traceId)
@@ -103,24 +112,24 @@ public class SpanBenchmarks {
   }
 
   @Benchmark
-  public Span buildClientOnlySpan_clear() {
+  public zipkin.Span buildClientOnlySpan_clear() {
     return buildClientOnlySpan(sharedBuilder.clear());
   }
 
   @Benchmark
-  public Span2 buildClientOnlySpan2() {
-    return buildClientOnlySpan2(Span2.builder());
+  public Span buildClientOnlySpan2() {
+    return buildClientOnlySpan2(Span.newBuilder());
   }
 
-  static Span2 buildClientOnlySpan2(Span2.Builder builder) {
+  static Span buildClientOnlySpan2(Span.Builder builder) {
     return builder
-      .traceId(traceId)
-      .parentId(traceId)
-      .id(spanId)
+      .traceId(traceIdHex)
+      .parentId(traceIdHex)
+      .id(spanIdHex)
       .name("get")
-      .kind(Span2.Kind.CLIENT)
-      .localEndpoint(frontend)
-      .remoteEndpoint(backend)
+      .kind(Span.Kind.CLIENT)
+      .localEndpoint(frontend2)
+      .remoteEndpoint(backend2)
       .timestamp(1472470996199000L)
       .duration(207000L)
       .addAnnotation(1472470996238000L, Constants.WIRE_SEND)
@@ -131,18 +140,18 @@ public class SpanBenchmarks {
   }
 
   @Benchmark
-  public Span2 buildClientOnlySpan2_clear() {
+  public Span buildClientOnlySpan2_clear() {
     return buildClientOnlySpan2(shared2Builder.clear());
   }
 
   @Benchmark
-  public Span2 buildClientOnlySpan2_clone() {
+  public Span buildClientOnlySpan2_clone() {
     return shared2Builder.clone().build();
   }
 
   @Benchmark
-  public Span buildRpcSpan() {
-    return Span.builder() // web calls app
+  public zipkin.Span buildRpcSpan() {
+    return zipkin.Span.builder() // web calls app
         .traceId(1L)
         .id(2L)
         .parentId(1L)

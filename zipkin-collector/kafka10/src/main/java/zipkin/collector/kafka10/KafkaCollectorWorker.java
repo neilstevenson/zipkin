@@ -27,10 +27,12 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import zipkin.Codec;
+import zipkin.Span;
+import zipkin.SpanDecoder;
 import zipkin.collector.Collector;
 import zipkin.collector.CollectorMetrics;
 
+import static zipkin.SpanDecoder.DETECTING_DECODER;
 import static zipkin.storage.Callback.NOOP;
 
 /** Consumes spans from Kafka messages, ignoring malformed input */
@@ -74,23 +76,17 @@ final class KafkaCollectorWorker implements Runnable {
           if (bytes.length == 0) {
             metrics.incrementMessagesDropped();
           } else {
-            // In TBinaryProtocol encoding, the first byte is the TType, in a range 0-16
-            // .. If the first byte isn't in that range, it isn't a thrift.
-            //
-            // When byte(0) == '[' (91), assume it is a list of json-encoded spans
-            //
-            // When byte(0) <= 16, assume it is a TBinaryProtocol-encoded thrift
-            // .. When serializing a Span (Struct), the first byte will be the type of a field
-            // .. When serializing a List[ThriftSpan], the first byte is the member type, TType.STRUCT(12)
-            // .. As ThriftSpan has no STRUCT fields: so, if the first byte is TType.STRUCT(12), it is a list.
-            if (bytes[0] == '[') {
-              collector.acceptSpans(bytes, Codec.JSON, NOOP);
-            } else {
-              if (bytes[0] == 12 /* TType.STRUCT */) {
-                collector.acceptSpans(bytes, Codec.THRIFT, NOOP);
-              } else {
-                collector.acceptSpans(Collections.singletonList(bytes), Codec.THRIFT, NOOP);
+            // If we received legacy single-span encoding, decode it into a singleton list
+            if (bytes[0] <= 16 && bytes[0] != 12 /* thrift, but not a list */) {
+              metrics.incrementBytes(bytes.length);
+              try {
+                Span span = SpanDecoder.THRIFT_DECODER.readSpan(bytes);
+                collector.accept(Collections.singletonList(span), NOOP);
+              } catch (RuntimeException e) {
+                metrics.incrementMessagesDropped();
               }
+            } else {
+              collector.acceptSpans(bytes, DETECTING_DECODER, NOOP);
             }
           }
         }

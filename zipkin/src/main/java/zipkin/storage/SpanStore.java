@@ -14,10 +14,10 @@
 package zipkin.storage;
 
 import java.util.List;
+import javax.annotation.Nullable;
 import zipkin.DependencyLink;
 import zipkin.Endpoint;
 import zipkin.Span;
-import zipkin.internal.Nullable;
 
 public interface SpanStore {
 
@@ -107,7 +107,7 @@ public interface SpanStore {
    * the original endTs, even when bucketed. Using the daily example, if endTs was 11pm and lookback
    * was 25 hours, the implementation would query against 2 buckets.
    *
-   * <p>Some implementations parse {@link zipkin.internal.DependencyLinkSpan} from storage and call
+   * <p>Some implementations parse {@link zipkin2.Span} from storage and call
    * {@link zipkin.internal.DependencyLinker} to aggregate links. The reason is certain graph logic,
    * such as skipping up the tree is difficult to implement as a storage query.
    *

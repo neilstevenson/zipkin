@@ -13,17 +13,21 @@
  */
 package zipkin.server;
 
+import java.util.List;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import okio.Buffer;
 import okio.GzipSink;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.embedded.LocalServerPort;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
-import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -31,10 +35,14 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.ConfigurableWebApplicationContext;
 import zipkin.Codec;
 import zipkin.Span;
-import zipkin.storage.InMemoryStorage;
+import zipkin.internal.ApplyTimestampAndDuration;
+import zipkin.internal.V2SpanConverter;
+import zipkin2.codec.SpanBytesEncoder;
+import zipkin2.storage.InMemoryStorage;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -43,14 +51,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static zipkin.TestObjects.LOTS_OF_SPANS;
 import static zipkin.TestObjects.TRACE;
 import static zipkin.TestObjects.span;
 import static zipkin.internal.Util.UTF_8;
 
-@SpringBootTest(classes = ZipkinServer.class)
+@SpringBootTest(
+  classes = ZipkinServer.class,
+  webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+)
 @RunWith(SpringJUnit4ClassRunner.class)
-@WebAppConfiguration
-@TestPropertySource(properties = {"zipkin.store.type=mem", "spring.config.name=zipkin-server"})
+@TestPropertySource(properties = "spring.config.name=zipkin-server")
 public class ZipkinServerIntegrationTest {
 
   @Autowired
@@ -59,6 +70,8 @@ public class ZipkinServerIntegrationTest {
   InMemoryStorage storage;
   @Autowired
   ActuateCollectorMetrics metrics;
+  @LocalServerPort
+  int zipkinPort;
 
   MockMvc mockMvc;
 
@@ -77,8 +90,29 @@ public class ZipkinServerIntegrationTest {
   }
 
   @Test
+  public void writeSpans_version2() throws Exception {
+    Span span = ApplyTimestampAndDuration.apply(LOTS_OF_SPANS[0]);
+
+    byte[] message = SpanBytesEncoder.JSON_V2.encodeList(asList(
+      V2SpanConverter.fromSpan(span).get(0)
+    ));
+
+    performAsync(post("/api/v2/spans").content(message))
+      .andExpect(status().isAccepted());
+
+    // sleep as the the storage operation is async
+    Thread.sleep(1500);
+
+    // We read it back in span v1 format
+    mockMvc.perform(get(format("/api/v1/trace/" + span.traceIdString())))
+      .andExpect(status().isOk())
+      .andExpect(content().string(new String(Codec.JSON.writeSpans(asList(span)), UTF_8)));
+  }
+
+  @Test
   public void writeSpans_updatesMetrics() throws Exception {
-    byte[] body = Codec.JSON.writeSpans(TRACE);
+    List<Span> spans = asList(LOTS_OF_SPANS[0], LOTS_OF_SPANS[1], LOTS_OF_SPANS[2]);
+    byte[] body = Codec.JSON.writeSpans(spans);
     mockMvc.perform(post("/api/v1/spans").content(body));
     mockMvc.perform(post("/api/v1/spans").content(body));
 
@@ -89,9 +123,9 @@ public class ZipkinServerIntegrationTest {
         .andExpect(jsonPath("$.['counter.zipkin_collector.bytes.http']").value(body.length * 2))
         .andExpect(jsonPath("$.['gauge.zipkin_collector.message_bytes.http']")
             .value(Double.valueOf(body.length))) // most recent size
-        .andExpect(jsonPath("$.['counter.zipkin_collector.spans.http']").value(TRACE.size() * 2))
+        .andExpect(jsonPath("$.['counter.zipkin_collector.spans.http']").value(spans.size() * 2))
         .andExpect(jsonPath("$.['gauge.zipkin_collector.message_spans.http']")
-            .value(Double.valueOf(TRACE.size()))); // most recent count
+            .value(Double.valueOf(spans.size()))); // most recent count
   }
 
   @Test
@@ -152,6 +186,13 @@ public class ZipkinServerIntegrationTest {
     mockMvc
         .perform(get("/health"))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  public void v2WiresUp() throws Exception {
+    mockMvc
+      .perform(get("/api/v2/services"))
+      .andExpect(status().isOk());
   }
 
   public void writeSpans_gzipEncoded() throws Exception {
@@ -261,10 +302,22 @@ public class ZipkinServerIntegrationTest {
       .andExpect(status().isOk());
   }
 
-  @Test
-  public void redirectsRootToZipkin() throws Exception {
-    mockMvc.perform(get("/"))
-      .andExpect(status().is(302));
+  /** Simulate a proxy which forwards / to zipkin as opposed to resolving / -> /zipkin first */
+  @Test public void redirectedHeaderUsesOriginalHostAndPort() throws Exception {
+    OkHttpClient client = new OkHttpClient.Builder().followRedirects(false).build();
+
+    Request forwarded = new Request.Builder()
+      .url("http://localhost:" + zipkinPort + "/")
+      .addHeader("Host", "zipkin.com")
+      .addHeader("X-Forwarded-Proto", "https")
+      .addHeader("X-Forwarded-Port", "444")
+      .build();
+
+    Response response = client.newCall(forwarded).execute();
+
+    // Redirect header should be the proxy, not the backed IP/port
+    assertThat(response.header("Location"))
+      .isEqualTo("./zipkin/");
   }
 
   ResultActions performAsync(MockHttpServletRequestBuilder request) throws Exception {

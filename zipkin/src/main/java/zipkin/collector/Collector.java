@@ -1,5 +1,5 @@
 /**
- * Copyright 2015-2016 The OpenZipkin Authors
+ * Copyright 2015-2017 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -14,16 +14,20 @@
 package zipkin.collector;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Logger;
-import zipkin.Codec;
-import zipkin.Span;
+import zipkin.SpanDecoder;
+import zipkin.internal.DetectingSpanDecoder;
+import zipkin.internal.V2Collector;
+import zipkin.internal.V2JsonSpanDecoder;
+import zipkin.internal.V2SpanConverter;
+import zipkin.internal.V2StorageComponent;
 import zipkin.storage.Callback;
 import zipkin.storage.StorageComponent;
+import zipkin2.Span;
+import zipkin2.codec.SpanBytesDecoder;
 
-import static java.lang.String.format;
-import static java.util.logging.Level.WARNING;
+import static zipkin.internal.DetectingSpanDecoder.detectFormat;
 import static zipkin.internal.Util.checkNotNull;
 
 /**
@@ -34,7 +38,8 @@ import static zipkin.internal.Util.checkNotNull;
  * before storage is attempted. This ensures that calling threads are disconnected from storage
  * threads.
  */
-public final class Collector {
+public class Collector
+  extends zipkin.internal.Collector<SpanDecoder, zipkin.Span> { // not final for mock
 
   /** Needed to scope this to the correct logging category */
   public static Builder builder(Class<?> loggingClass) {
@@ -44,8 +49,8 @@ public final class Collector {
   public static final class Builder {
     final Logger logger;
     StorageComponent storage = null;
-    CollectorSampler sampler = CollectorSampler.ALWAYS_SAMPLE;
-    CollectorMetrics metrics = CollectorMetrics.NOOP_METRICS;
+    CollectorSampler sampler = null;
+    CollectorMetrics metrics = null;
 
     Builder(Logger logger) {
       this.logger = logger;
@@ -74,37 +79,53 @@ public final class Collector {
     }
   }
 
-  final Logger logger;
-  final StorageComponent storage;
   final CollectorSampler sampler;
-  final CollectorMetrics metrics;
+  final StorageComponent storage;
+  final V2Collector storage2;
 
   Collector(Builder builder) {
-    this.logger = checkNotNull(builder.logger, "logger");
+    super(builder.logger, builder.metrics);
     this.storage = checkNotNull(builder.storage, "storage");
     this.sampler = builder.sampler == null ? CollectorSampler.ALWAYS_SAMPLE : builder.sampler;
-    this.metrics = builder.metrics == null ? CollectorMetrics.NOOP_METRICS : builder.metrics;
+    if (storage instanceof V2StorageComponent) {
+      storage2 = new V2Collector(
+        builder.logger,
+        builder.metrics,
+        builder.sampler,
+        ((V2StorageComponent) storage).delegate()
+      );
+    } else {
+      storage2 = null;
+    }
   }
 
-  public void acceptSpans(byte[] serializedSpans, Codec codec, Callback<Void> callback) {
-    metrics.incrementBytes(serializedSpans.length);
-    List<Span> spans;
+  @Override
+  public void acceptSpans(byte[] serializedSpans, SpanDecoder decoder, Callback<Void> callback) {
     try {
-      spans = codec.readSpans(serializedSpans);
+      if (decoder instanceof DetectingSpanDecoder) decoder = detectFormat(serializedSpans);
     } catch (RuntimeException e) {
+      metrics.incrementBytes(serializedSpans.length);
       callback.onError(errorReading(e));
       return;
     }
-    accept(spans, callback);
+    if (storage2 != null && decoder instanceof V2JsonSpanDecoder) {
+      storage2.acceptSpans(serializedSpans, SpanBytesDecoder.JSON_V2, callback);
+    } else {
+      super.acceptSpans(serializedSpans, decoder, callback);
+    }
   }
 
-  public void acceptSpans(List<byte[]> serializedSpans, Codec codec, Callback<Void> callback) {
-    List<Span> spans = new ArrayList<>(serializedSpans.size());
+  /**
+   * @deprecated All transports accept encoded lists of spans. Please update reporters to do so.
+   */
+  @Deprecated public void acceptSpans(List<byte[]> serializedSpans, SpanDecoder decoder,
+    Callback<Void> callback) {
+    List<zipkin.Span> spans = new ArrayList<>(serializedSpans.size());
     try {
       int bytesRead = 0;
       for (byte[] serializedSpan : serializedSpans) {
         bytesRead += serializedSpan.length;
-        spans.add(codec.readSpan(serializedSpan));
+        spans.add(decoder.readSpan(serializedSpan));
       }
       metrics.incrementBytes(bytesRead);
     } catch (RuntimeException e) {
@@ -114,94 +135,32 @@ public final class Collector {
     accept(spans, callback);
   }
 
-  public void accept(List<Span> spans, Callback<Void> callback) {
-    if (spans.isEmpty()) {
-      callback.onSuccess(null);
-      return;
-    }
-    metrics.incrementSpans(spans.size());
-
-    List<Span> sampled = sample(spans);
-    if (sampled.isEmpty()) {
-      callback.onSuccess(null);
-      return;
-    }
-
-    try {
-      storage.asyncSpanConsumer().accept(sampled, acceptSpansCallback(sampled));
-      callback.onSuccess(null);
-    } catch (RuntimeException e) {
-      callback.onError(errorStoringSpans(sampled, e));
-      return;
-    }
-  }
-
-  List<Span> sample(List<Span> input) {
-    List<Span> sampled = new ArrayList<>(input.size());
-    for (Span s : input) {
-      if (sampler.isSampled(s)) sampled.add(s);
-    }
-    int dropped = input.size() - sampled.size();
-    if (dropped > 0) metrics.incrementSpansDropped(dropped);
-    return sampled;
-  }
-
-  Callback<Void> acceptSpansCallback(final List<Span> spans) {
-    return new Callback<Void>() {
-      @Override public void onSuccess(Void value) {
+  @Override public void accept(List<zipkin.Span> spans, Callback<Void> callback) {
+    if (storage2 != null) {
+      int length = spans.size();
+      List<Span> span2s = new ArrayList<>(length);
+      for (int i = 0; i < length; i++) {
+        span2s.addAll(V2SpanConverter.fromSpan(spans.get(i)));
       }
-
-      @Override public void onError(Throwable t) {
-        errorStoringSpans(spans, t);
-      }
-
-      @Override
-      public String toString() {
-        return appendSpanIds(spans, new StringBuilder("AcceptSpans(")).append(")").toString();
-      }
-    };
-  }
-
-  RuntimeException errorReading(Throwable e) {
-    return errorReading("Cannot decode spans", e);
-  }
-
-  RuntimeException errorReading(String message, Throwable e) {
-    metrics.incrementMessagesDropped();
-    return doError(message, e);
-  }
-
-  /**
-   * When storing spans, an exception can be raised before or after the fact. This adds context of
-   * span ids to give logs more relevance.
-   */
-  RuntimeException errorStoringSpans(List<Span> spans, Throwable e) {
-    metrics.incrementSpansDropped(spans.size());
-    // The exception could be related to a span being huge. Instead of filling logs,
-    // print trace id, span id pairs
-    StringBuilder msg = appendSpanIds(spans, new StringBuilder("Cannot store spans "));
-    return doError(msg.toString(), e);
-  }
-
-  RuntimeException doError(String message, Throwable e) {
-    if (e instanceof RuntimeException && e.getMessage() != null && e.getMessage()
-        .startsWith("Malformed")) {
-      logger.log(WARNING, e.getMessage(), e);
-      return (RuntimeException) e;
+      storage2.accept(span2s, callback);
     } else {
-      message = format("%s due to %s(%s)", message, e.getClass().getSimpleName(),
-          e.getMessage() == null ? "" : e.getMessage());
-      logger.log(WARNING, message, e);
-      return new RuntimeException(message, e);
+      super.accept(spans, callback);
     }
   }
 
-  static StringBuilder appendSpanIds(List<Span> spans, StringBuilder message) {
-    message.append("[");
-    for (Iterator<Span> iterator = spans.iterator(); iterator.hasNext(); ) {
-      message.append(iterator.next().idString());
-      if (iterator.hasNext()) message.append(", ");
-    }
-    return message.append("]");
+  @Override protected List<zipkin.Span> decodeList(SpanDecoder decoder, byte[] serialized) {
+    return decoder.readSpans(serialized);
+  }
+
+  @Override protected boolean isSampled(zipkin.Span span) {
+    return sampler.isSampled(span.traceId, span.debug);
+  }
+
+  @Override protected void record(List<zipkin.Span> sampled, Callback<Void> callback) {
+    storage.asyncSpanConsumer().accept(sampled, callback);
+  }
+
+  @Override protected String idString(zipkin.Span span) {
+    return span.idString();
   }
 }

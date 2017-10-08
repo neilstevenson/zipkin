@@ -13,6 +13,7 @@
  */
 package zipkin.storage.elasticsearch.http;
 
+import java.util.concurrent.TimeUnit;
 import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import org.junit.After;
@@ -29,8 +30,7 @@ import zipkin.autoconfigure.storage.elasticsearch.http.BasicAuthInterceptor;
 import zipkin.autoconfigure.storage.elasticsearch.http.ZipkinElasticsearchHttpStorageAutoConfiguration;
 import zipkin.autoconfigure.storage.elasticsearch.http.ZipkinElasticsearchHttpStorageProperties;
 import zipkin.autoconfigure.storage.elasticsearch.http.ZipkinElasticsearchOkHttpAutoConfiguration;
-
-import java.util.concurrent.TimeUnit;
+import zipkin2.elasticsearch.ElasticsearchStorage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.util.EnvironmentTestUtils.addEnvironment;
@@ -246,8 +246,8 @@ public class ZipkinElasticsearchHttpStorageAutoConfigurationTest {
         ZipkinElasticsearchHttpStorageAutoConfiguration.class);
     context.refresh();
 
-    assertThat(es().indexNameFormatter().indexNameForTimestamp(0))
-        .isEqualTo("zipkin-1970-01-01");
+    assertThat(es().indexNameFormatter().formatTypeAndTimestamp("span", 0))
+        .isEqualTo("zipkin:span-1970-01-01");
   }
 
   @Test
@@ -262,8 +262,8 @@ public class ZipkinElasticsearchHttpStorageAutoConfigurationTest {
         ZipkinElasticsearchHttpStorageAutoConfiguration.class);
     context.refresh();
 
-    assertThat(es().indexNameFormatter().indexNameForTimestamp(0))
-        .isEqualTo("zipkin_prod-1970-01-01");
+    assertThat(es().indexNameFormatter().formatTypeAndTimestamp("span", 0))
+        .isEqualTo("zipkin_prod:span-1970-01-01");
   }
 
   @Test
@@ -278,8 +278,8 @@ public class ZipkinElasticsearchHttpStorageAutoConfigurationTest {
         ZipkinElasticsearchHttpStorageAutoConfiguration.class);
     context.refresh();
 
-    assertThat(es().indexNameFormatter().indexNameForTimestamp(0))
-        .isEqualTo("zipkin-1970.01.01");
+    assertThat(es().indexNameFormatter().formatTypeAndTimestamp("span", 0))
+        .isEqualTo("zipkin:span-1970.01.01");
   }
 
   @Test
@@ -315,7 +315,7 @@ public class ZipkinElasticsearchHttpStorageAutoConfigurationTest {
   }
 
   @Test
-  public void providesBasicAuthInterceptor_whenBasicAuthUserNameandPasswordConfigured() {
+  public void providesBasicAuthInterceptor_whenBasicAuthUserNameAndPasswordConfigured() {
     context = new AnnotationConfigApplicationContext();
     addEnvironment(context,
         "zipkin.storage.type:elasticsearch",
@@ -334,7 +334,38 @@ public class ZipkinElasticsearchHttpStorageAutoConfigurationTest {
         .contains((Class) BasicAuthInterceptor.class);
   }
 
-  ElasticsearchHttpStorage es() {
-    return context.getBean(ElasticsearchHttpStorage.class);
+  @Test
+  public void legacyReadsEnabled() {
+    context = new AnnotationConfigApplicationContext();
+    addEnvironment(context,
+      "zipkin.storage.type:elasticsearch",
+      "zipkin.storage.elasticsearch.hosts:http://host1:9200");
+    context.register(PropertyPlaceholderAutoConfiguration.class,
+      ZipkinElasticsearchOkHttpAutoConfiguration.class,
+      ZipkinElasticsearchHttpStorageAutoConfiguration.class);
+    context.refresh();
+
+    assertThat(context.getBean(ElasticsearchHttpStorage.class).legacyReadsEnabled)
+      .isTrue();
+  }
+
+  @Test
+  public void legacyReadsEnabled_false() {
+    context = new AnnotationConfigApplicationContext();
+    addEnvironment(context,
+      "zipkin.storage.type:elasticsearch",
+      "zipkin.storage.elasticsearch.hosts:http://host1:9200",
+      "zipkin.storage.elasticsearch.legacy-reads-enabled:false");
+    context.register(PropertyPlaceholderAutoConfiguration.class,
+      ZipkinElasticsearchOkHttpAutoConfiguration.class,
+      ZipkinElasticsearchHttpStorageAutoConfiguration.class);
+    context.refresh();
+
+    assertThat(context.getBean(ElasticsearchHttpStorage.class).legacyReadsEnabled)
+      .isFalse();
+  }
+
+  ElasticsearchStorage es() {
+    return context.getBean(ElasticsearchHttpStorage.class).delegate;
   }
 }

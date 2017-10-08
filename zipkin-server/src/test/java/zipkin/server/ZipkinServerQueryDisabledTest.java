@@ -32,7 +32,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * associated assets 404 vs throw exceptions.
  */
 @SpringBootTest(classes = ZipkinServer.class, properties = {
-    "zipkin.storage.type=mem",
     "spring.config.name=zipkin-server",
     "zipkin.query.enabled=false",
     "zipkin.ui.enabled=false"
@@ -45,6 +44,7 @@ public class ZipkinServerQueryDisabledTest {
   @Test(expected = NoSuchBeanDefinitionException.class)
   public void disabledQueryBean() throws Exception {
     context.getBean(ZipkinQueryApiV1.class);
+    context.getBean(ZipkinQueryApiV2.class);
   }
 
   @Test(expected = NoSuchBeanDefinitionException.class)
@@ -56,6 +56,8 @@ public class ZipkinServerQueryDisabledTest {
     MockMvc mockMvc = MockMvcBuilders.webAppContextSetup(this.context).build();
     mockMvc.perform(get("/api/v1/traces"))
         .andExpect(status().isNotFound());
+    mockMvc.perform(get("/api/v2/traces"))
+      .andExpect(status().isNotFound());
     mockMvc.perform(get("/index.html"))
         .andExpect(status().isNotFound());
 

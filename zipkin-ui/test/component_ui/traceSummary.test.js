@@ -80,7 +80,7 @@ describe('get service name of a span', () => {
     const testSpan = {
       binaryAnnotations: [{
         key: Constants.SERVER_ADDR,
-        value: 'something',
+        value: '1',
         endpoint: {
           serviceName: 'user-service'
         }
@@ -89,10 +89,47 @@ describe('get service name of a span', () => {
     getServiceName(testSpan).should.equal('user-service');
   });
 
+  it('should get service name from broker addr', () => {
+    const testSpan = {
+      binaryAnnotations: [{
+        key: Constants.MESSAGE_ADDR,
+        value: '1',
+        endpoint: {
+          serviceName: 'kafka'
+        }
+      }]
+    };
+    getServiceName(testSpan).should.equal('kafka');
+  });
+
   it('should get service name from some server annotation', () => {
     const testSpan = {
       annotations: [{
         value: Constants.SERVER_RECEIVE_FRAGMENT,
+        endpoint: {
+          serviceName: 'test-service'
+        }
+      }]
+    };
+    getServiceName(testSpan).should.equal('test-service');
+  });
+
+  it('should get service name from producer annotation', () => {
+    const testSpan = {
+      annotations: [{
+        value: Constants.MESSAGE_SEND,
+        endpoint: {
+          serviceName: 'test-service'
+        }
+      }]
+    };
+    getServiceName(testSpan).should.equal('test-service');
+  });
+
+  it('should get service name from consumer annotation', () => {
+    const testSpan = {
+      annotations: [{
+        value: Constants.MESSAGE_RECEIVE,
         endpoint: {
           serviceName: 'test-service'
         }
@@ -137,6 +174,23 @@ describe('get service name of a span', () => {
       }]
     };
     getServiceName(testSpan).should.equal('localservice');
+  });
+
+  it('should get service name from any binary annotation', () => {
+    const testSpan = {
+      binaryAnnotations: [{
+        key: 'user',
+        value: 'grpc-client-example',
+        endpoint: {
+          serviceName: 'echecklist-localdev'
+        }
+      }]
+    };
+    getServiceName(testSpan).should.equal('echecklist-localdev');
+  });
+
+  it('should handle no annotations', () => {
+    expect(getServiceName({})).to.equal(null);
   });
 });
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2015-2016 The OpenZipkin Authors
+ * Copyright 2015-2017 The OpenZipkin Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -27,7 +27,7 @@ import okio.ByteString;
 
 import static java.lang.String.format;
 import static zipkin.internal.Util.checkNotNull;
-import static zipkin.moshi.JsonReaders.enterPath;
+import static zipkin2.elasticsearch.internal.JsonReaders.enterPath;
 
 // http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html
 final class AWSSignatureVersion4 implements Interceptor {
@@ -81,7 +81,9 @@ final class AWSSignatureVersion4 implements Interceptor {
     // CanonicalURI + '\n' +
     // TODO: make this more efficient
     result.writeUtf8(input.url().encodedPath()
-        .replace("*", "%2A").replace(",", "%2C")
+        .replace("*", "%2A")
+        .replace(",", "%2C")
+        .replace(":", "%3A")
     ).writeByte('\n');
 
     // CanonicalQueryString + '\n' +

@@ -30,6 +30,9 @@ import org.junit.Test;
 import zipkin.Annotation;
 import zipkin.Codec;
 import zipkin.Span;
+import zipkin.internal.ApplyTimestampAndDuration;
+import zipkin.internal.V2SpanConverter;
+import zipkin2.codec.SpanBytesEncoder;
 
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
@@ -56,6 +59,27 @@ public class ZipkinRuleTest {
     // read the traces directly
     assertThat(zipkin.getTraces())
         .containsOnly(trace);
+  }
+
+  @Test
+  public void getTraces_storedViaPostVersion2() throws IOException {
+    List<Span> spans = Arrays.asList(
+      ApplyTimestampAndDuration.apply(LOTS_OF_SPANS[0]),
+      ApplyTimestampAndDuration.apply(LOTS_OF_SPANS[1])
+    );
+
+    byte[] message = SpanBytesEncoder.JSON_V2.encodeList(V2SpanConverter.fromSpans(spans));
+
+    // write the span to the zipkin using http api v2
+    Response response = client.newCall(new Request.Builder()
+      .url(zipkin.httpUrl() + "/api/v2/spans")
+      .post(RequestBody.create(MediaType.parse("application/json"), message)).build()
+    ).execute();
+    assertThat(response.code()).isEqualTo(202);
+
+    // read the traces directly
+    assertThat(zipkin.getTraces())
+      .containsOnly(asList(spans.get(0)), asList(spans.get(1)));
   }
 
   /** The rule is here to help debugging. Even partial spans should be returned */
@@ -146,10 +170,11 @@ public class ZipkinRuleTest {
    */
   @Test
   public void collectorMetrics_spans() throws IOException {
-    postSpans(TRACE);
-    postSpans(TRACE);
+    postSpans(asList(LOTS_OF_SPANS[0]));
+    postSpans(asList(LOTS_OF_SPANS[1], LOTS_OF_SPANS[2]));
 
-    assertThat(zipkin.collectorMetrics().spans()).isEqualTo(TRACE.size() * 2);
+    assertThat(zipkin.collectorMetrics().spans())
+      .isEqualTo(3);
   }
 
   @Test

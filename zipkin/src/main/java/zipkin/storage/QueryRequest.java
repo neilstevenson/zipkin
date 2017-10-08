@@ -20,12 +20,12 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 import zipkin.Annotation;
 import zipkin.BinaryAnnotation;
 import zipkin.Endpoint;
 import zipkin.Span;
 import zipkin.internal.ApplyTimestampAndDuration;
-import zipkin.internal.Nullable;
 
 import static zipkin.Constants.CORE_ANNOTATIONS;
 import static zipkin.internal.Util.UTF_8;
@@ -225,7 +225,7 @@ public final class QueryRequest {
      *
      * @see QueryRequest#toAnnotationQuery()
      */
-    public Builder parseAnnotationQuery(String annotationQuery) {
+    public Builder parseAnnotationQuery(@Nullable String annotationQuery) {
       if (annotationQuery != null && !annotationQuery.isEmpty()) {
         for (String ann : annotationQuery.split(" and ")) {
           int idx = ann.indexOf('=');
@@ -349,9 +349,9 @@ public final class QueryRequest {
     h *= 1000003;
     h ^= (maxDuration == null) ? 0 : maxDuration.hashCode();
     h *= 1000003;
-    h ^= (endTs >>> 32) ^ endTs;
+    h ^= (int) (h ^ ((endTs >>> 32) ^ endTs));
     h *= 1000003;
-    h ^= (lookback >>> 32) ^ lookback;
+    h ^= (int) (h ^ ((lookback >>> 32) ^ lookback));
     h *= 1000003;
     h ^= limit;
     return h;
