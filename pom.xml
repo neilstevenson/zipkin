@@ -19,7 +19,7 @@
 
   <groupId>io.zipkin.java</groupId>
   <artifactId>parent</artifactId>
-  <version>2.1.1-SNAPSHOT</version>
+  <version>2.2.2-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <modules>
@@ -458,19 +458,6 @@
   </dependencyManagement>
 
   <dependencies>
-    <!--
-     For javax.annotation.ParametersAreNonnullByDefault and javax.annotation.Nullable
-     This is added as a root-level dependency to prevent javadoc from failing.
-     servicemix is used as it is OSGi friendly
-     -->
-    <dependency>
-      <groupId>org.apache.servicemix.bundles</groupId>
-      <artifactId>org.apache.servicemix.bundles.jsr305</artifactId>
-      <version>3.0.2_1</version>
-      <!-- eventhough annotations are runtime retention, we do not look them up reflectively -->
-      <scope>provided</scope>
-    </dependency>
-
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>

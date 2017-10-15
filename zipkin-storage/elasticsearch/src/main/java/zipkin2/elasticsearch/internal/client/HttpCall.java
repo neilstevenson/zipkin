@@ -15,6 +15,7 @@ package zipkin2.elasticsearch.internal.client;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.Semaphore;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -35,10 +36,12 @@ public final class HttpCall<V> extends Call<V> {
 
   public static class Factory implements Closeable {
     final OkHttpClient ok;
+    final Semaphore semaphore;
     public final HttpUrl baseUrl;
 
     public Factory(OkHttpClient ok, HttpUrl baseUrl) {
       this.ok = ok;
+      this.semaphore = new Semaphore(ok.dispatcher().getMaxRequests());
       this.baseUrl = baseUrl;
     }
 
@@ -53,22 +56,38 @@ public final class HttpCall<V> extends Call<V> {
 
   public final okhttp3.Call call;
   public final BodyConverter<V> bodyConverter;
+  final Semaphore semaphore;
+
 
   HttpCall(Factory factory, Request request, BodyConverter<V> bodyConverter) {
-    this(factory.ok.newCall(request), bodyConverter);
+    this(
+      factory.ok.newCall(request),
+      factory.semaphore,
+      bodyConverter
+    );
   }
 
-  HttpCall(okhttp3.Call call, BodyConverter<V> bodyConverter) {
+  HttpCall(okhttp3.Call call, Semaphore semaphore, BodyConverter<V> bodyConverter) {
     this.call = call;
+    this.semaphore = semaphore;
     this.bodyConverter = bodyConverter;
   }
 
   @Override public V execute() throws IOException {
-    return parseResponse(call.execute(), bodyConverter);
+    if (!semaphore.tryAcquire()) throw new IllegalStateException("over capacity");
+    try {
+      return parseResponse(call.execute(), bodyConverter);
+    } finally {
+      semaphore.release();
+    }
   }
 
   @Override public void enqueue(Callback<V> delegate) {
-    call.enqueue(new V2CallbackAdapter<>(bodyConverter, delegate));
+    if (!semaphore.tryAcquire()) {
+      delegate.onError(new IllegalStateException("over capacity"));
+      return;
+    }
+    call.enqueue(new V2CallbackAdapter<>(semaphore, bodyConverter, delegate));
   }
 
   @Override public void cancel() {
@@ -80,24 +99,28 @@ public final class HttpCall<V> extends Call<V> {
   }
 
   @Override public HttpCall<V> clone() {
-    return new HttpCall<V>(call.clone(), bodyConverter);
+    return new HttpCall<V>(call.clone(), semaphore, bodyConverter);
   }
 
   static class V2CallbackAdapter<V> implements okhttp3.Callback {
+    final Semaphore semaphore;
     final BodyConverter<V> bodyConverter;
     final Callback<V> delegate;
 
-    V2CallbackAdapter(BodyConverter<V> bodyConverter, Callback<V> delegate) {
+    V2CallbackAdapter(Semaphore semaphore, BodyConverter<V> bodyConverter, Callback<V> delegate) {
+      this.semaphore = semaphore;
       this.bodyConverter = bodyConverter;
       this.delegate = delegate;
     }
 
     @Override public void onFailure(okhttp3.Call call, IOException e) {
+      semaphore.release();
       delegate.onError(e);
     }
 
     /** Note: this runs on the {@link okhttp3.OkHttpClient#dispatcher() dispatcher} thread! */
     @Override public void onResponse(okhttp3.Call call, Response response) {
+      semaphore.release();
       try {
         delegate.onSuccess(parseResponse(response, bodyConverter));
       } catch (Throwable e) {
@@ -107,7 +130,8 @@ public final class HttpCall<V> extends Call<V> {
     }
   }
 
-  public static <V> V parseResponse(Response response, BodyConverter<V> bodyConverter) throws IOException {
+  public static <V> V parseResponse(Response response, BodyConverter<V> bodyConverter)
+    throws IOException {
     if (!HttpHeaders.hasBody(response)) {
       if (response.isSuccessful()) {
         return null;

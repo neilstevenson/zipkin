@@ -58,6 +58,10 @@ public class CollectorTest {
         return "1";
       }
 
+      @Override boolean shouldWarn() {
+        return true;
+      }
+
       @Override void warn(String message, Throwable e) {
       }
     });
@@ -69,6 +73,12 @@ public class CollectorTest {
 
     assertThat(collector.acceptSpansCallback(asList(span1, span2)))
       .hasToString("AcceptSpans([1, 2])");
+  }
+
+  @Test
+  public void acceptSpansCallback_toStringIncludesSpanIds_noMoreThan3() {
+    assertThat(collector.acceptSpansCallback(asList(span1, span1, span1, span1)))
+      .hasToString("AcceptSpans([1, 1, 1, ...])");
   }
 
   @Test

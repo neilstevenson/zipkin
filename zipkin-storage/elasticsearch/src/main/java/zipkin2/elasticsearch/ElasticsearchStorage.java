@@ -21,7 +21,6 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import javax.annotation.Nullable;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -31,6 +30,7 @@ import okio.Buffer;
 import zipkin2.CheckResult;
 import zipkin2.elasticsearch.internal.IndexNameFormatter;
 import zipkin2.elasticsearch.internal.client.HttpCall;
+import zipkin2.internal.Nullable;
 import zipkin2.internal.Platform;
 import zipkin2.storage.SpanConsumer;
 import zipkin2.storage.SpanStore;
@@ -107,7 +107,13 @@ public abstract class ElasticsearchStorage extends zipkin2.storage.StorageCompon
      */
     public abstract Builder hostsSupplier(HostsSupplier hosts);
 
-    /** Sets maximum in-flight requests from this process to any Elasticsearch host. Defaults to 64 */
+    /**
+     * Sets maximum in-flight requests from this process to any Elasticsearch host. Defaults to 64
+     *
+     * <p>A backlog is not permitted. Once this number of requests are in-flight, future requests
+     * will drop until we are under maxRequests again. This allows the server to remain up during a
+     * traffic surge.
+     */
     public abstract Builder maxRequests(int maxRequests);
 
     /**

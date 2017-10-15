@@ -17,12 +17,11 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Logger;
-import javax.annotation.Nullable;
 import zipkin.collector.CollectorMetrics;
 import zipkin.storage.Callback;
 
 import static java.lang.String.format;
-import static java.util.logging.Level.WARNING;
+import static java.util.logging.Level.FINE;
 import static zipkin.internal.Util.checkNotNull;
 
 public abstract class Collector<D, S> {
@@ -43,8 +42,12 @@ public abstract class Collector<D, S> {
 
   protected abstract String idString(S span);
 
+  boolean shouldWarn() {
+    return logger.isLoggable(FINE);
+  }
+
   void warn(String message, Throwable e) {
-    logger.log(WARNING, message, e);
+    logger.log(FINE, message, e);
   }
 
   protected void acceptSpans(byte[] serializedSpans, D decoder, Callback<Void> callback) {
@@ -129,23 +132,29 @@ public abstract class Collector<D, S> {
   }
 
   RuntimeException doError(String message, Throwable e) {
-    String exceptionMessage = e.getMessage() != null ? e.getMessage() : "";
-    if (e instanceof RuntimeException && exceptionMessage.startsWith("Malformed")) {
-      warn(exceptionMessage, e);
+    String error = e.getMessage() != null ? e.getMessage() : "";
+    if (e instanceof RuntimeException && error.startsWith("Malformed")) {
+      if (shouldWarn()) warn(error, e);
       return (RuntimeException) e;
     } else {
-      message = format("%s due to %s(%s)", message, e.getClass().getSimpleName(), exceptionMessage);
-      warn(message, e);
+      if (shouldWarn()) {
+        message = format("%s due to %s(%s)", message, e.getClass().getSimpleName(), error);
+        warn(message, e);
+      }
       return new RuntimeException(message, e);
     }
   }
 
   StringBuilder appendSpanIds(List<S> spans, StringBuilder message) {
     message.append("[");
-    for (Iterator<S> iterator = spans.iterator(); iterator.hasNext(); ) {
+    int i = 0;
+    Iterator<S> iterator = spans.iterator();
+    while (iterator.hasNext() && i++ < 3) {
       message.append(idString(iterator.next()));
       if (iterator.hasNext()) message.append(", ");
     }
+    if (iterator.hasNext()) message.append("...");
+
     return message.append("]");
   }
 }
